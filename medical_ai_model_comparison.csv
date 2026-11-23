@@ -1,0 +1,12 @@
+
+image_id,actual,cnn_prediction,resnet_prediction,efficientnet_prediction
+IMG001,Disease,Disease,Disease,Disease
+IMG002,Healthy,Healthy,Healthy,Disease
+IMG003,Disease,Healthy,Disease,Disease
+IMG004,Healthy,Disease,Healthy,Healthy
+IMG005,Disease,Disease,Disease,Healthy
+IMG006,Healthy,Healthy,Healthy,Healthy
+IMG007,Disease,Disease,Disease,Disease
+IMG008,Healthy,Healthy,Disease,Healthy
+IMG009,Disease,Healthy,Disease,Disease
+IMG010,Healthy,Healthy,Healthy,Healthy
