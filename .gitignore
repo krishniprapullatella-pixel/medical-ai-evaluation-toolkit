@@ -1,18 +1,11 @@
-
-# Medical image datasets - do not upload
-chest_xray/
-**/chest_xray/
-__MACOSX/
-**/__MACOSX/
-
 # Mac metadata
 .DS_Store
 ._*
 
+# Medical datasets
+chest_xray/
+**/chest_xray/
+
 # Python cache
 __pycache__/
 *.pyc
-
-# Virtual environments
-venv/
-.venv/

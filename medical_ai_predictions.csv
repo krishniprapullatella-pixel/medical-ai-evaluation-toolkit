@@ -1,0 +1,13 @@
+
+image_id,actual,predicted
+IMG001,Disease,Disease
+IMG002,Healthy,Healthy
+IMG003,Disease,Healthy
+IMG004,Healthy,Disease
+IMG005,Disease,Disease
+IMG006,Healthy,Healthy
+IMG007,Disease,Disease
+IMG008,Healthy,Healthy
+IMG009,Disease,Healthy
+IMG010,Healthy,Healthy
+

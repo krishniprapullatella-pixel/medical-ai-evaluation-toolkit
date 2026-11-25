@@ -1,0 +1,12 @@
+Metric,Value
+Accuracy,70.00%
+Precision,75.00%
+Recall,60.00%
+Specificity,80.00%
+F1-score,66.67%
+
+Total Images,10
+True Positives,3
+True Negatives,4
+False Positives,1
+False Negatives,2

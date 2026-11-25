@@ -1,85 +1,94 @@
 
-import medmnist
-from medmnist import PneumoniaMNIST
+from pathlib import Path
+from PIL import Image
 import matplotlib.pyplot as plt
-import numpy as np
+import random
 
-# ---------------------------------
-# 1. LOAD MEDICAL IMAGE DATASET
-# ---------------------------------
+# =====================================
+# 1. DATASET LOCATION
+# =====================================
 
-print("Loading PneumoniaMNIST dataset...")
+BASE_DIR = Path(__file__).parent / "chest_xray"
 
-train_dataset = PneumoniaMNIST(
-    split="train",
-    download=True
-)
+normal_folder = BASE_DIR / "train" / "NORMAL"
+pneumonia_folder = BASE_DIR / "train" / "PNEUMONIA"
 
-test_dataset = PneumoniaMNIST(
-    split="test",
-    download=True
-)
+# =====================================
+# 2. FIND ACTUAL JPEG IMAGES
+# =====================================
 
-# ---------------------------------
-# 2. DISPLAY DATASET INFORMATION
-# ---------------------------------
+normal_images = list(normal_folder.glob("*.jpeg"))
+pneumonia_images = list(pneumonia_folder.glob("*.jpeg"))
 
-print("\nDATASET INFORMATION")
+print("\nMEDICAL IMAGE DATASET")
+print("=" * 45)
 
-print("Training images:", len(train_dataset))
-print("Testing images:", len(test_dataset))
+print("Normal images:", len(normal_images))
+print("Pneumonia images:", len(pneumonia_images))
 
-print("Image shape:", train_dataset.imgs.shape)
-print("Label shape:", train_dataset.labels.shape)
+# Check whether images exist
 
-print("\nDataset loaded successfully!")
-
-# ---------------------------------
-# 3. EXTRACT IMAGES AND LABELS
-# ---------------------------------
-
-images = train_dataset.imgs
-labels = train_dataset.labels.flatten()
-
-print("\nNumber of images:", len(images))
-print("Unique labels:", np.unique(labels))
-
-# ---------------------------------
-# 4. DISPLAY SAMPLE MEDICAL IMAGES
-# ---------------------------------
-
-plt.figure(figsize=(12, 6))
-
-for i in range(8):
-
-    plt.subplot(2, 4, i + 1)
-
-    plt.imshow(
-    images[i],
-    cmap="gray",
-    interpolation="nearest"
-)
-
-    label = int(labels[i])
-
-    class_name = (
-        "Normal"
-        if label == 0
-        else "Pneumonia"
+if not normal_images or not pneumonia_images:
+    raise FileNotFoundError(
+        "Images not found! Check your chest_xray folder structure."
     )
 
-    plt.title(class_name)
-    plt.axis("off")
+# =====================================
+# 3. SELECT SAMPLE IMAGES
+# =====================================
 
-plt.suptitle("PneumoniaMNIST - Sample Chest X-rays")
+random.seed(42)
+
+selected_images = (
+    random.sample(normal_images, 4)
+    + random.sample(pneumonia_images, 4)
+)
+
+# =====================================
+# 4. DISPLAY ORIGINAL CHEST X-RAYS
+# =====================================
+
+fig, axes = plt.subplots(2, 4, figsize=(16, 9))
+
+for ax, image_path in zip(axes.flat, selected_images):
+
+    with Image.open(image_path) as image:
+
+        print(
+            image_path.name,
+            "| Original size:",
+            image.size,
+            "| Format:",
+            image.format
+        )
+
+        ax.imshow(image.convert("L"), cmap="gray")
+
+        ax.set_title(
+            f"{image_path.parent.name}\n"
+            f"{image.width} x {image.height} pixels"
+        )
+
+        ax.axis("off")
+
+plt.suptitle(
+    "Real Chest X-ray Images",
+    fontsize=18
+)
 
 plt.tight_layout()
 
-plt.savefig(
-    "medical_image_samples.png",
-    dpi=300
+# =====================================
+# 5. SAVE IMAGE SAMPLES
+# =====================================
+
+output_path = (
+    Path(__file__).parent / "real_chest_xray_samples.png"
 )
+
+plt.savefig(output_path, dpi=200)
 
 plt.show()
 
-print("\nSample images saved successfully!")
+print("\nImage inspection completed!")
+print("Image samples saved at:", output_path)
