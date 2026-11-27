@@ -359,6 +359,10 @@ def show_gradcam_page():
             f"Model Prediction: {predicted_class}"
         )
 
+        # -------------------------------------------------
+        # PROBABILITY METRICS
+        # -------------------------------------------------
+
         col1, col2 = st.columns(2)
 
         col1.metric(
@@ -370,6 +374,10 @@ def show_gradcam_page():
             "PNEUMONIA probability",
             f"{probabilities[1] * 100:.2f}%"
         )
+
+        # -------------------------------------------------
+        # VISUALIZATION
+        # -------------------------------------------------
 
         resized_image = image.resize((224, 224))
 
@@ -394,7 +402,7 @@ def show_gradcam_page():
         )
 
         axes[1].set_title(
-            "Grad-CAM Heatmap"
+            "Grad-CAM heatmap"
         )
 
         axes[2].imshow(
@@ -404,11 +412,11 @@ def show_gradcam_page():
         axes[2].imshow(
             cam,
             cmap="jet",
-            alpha=0.42
+            alpha=0.45
         )
 
         axes[2].set_title(
-            f"Grad-CAM Overlay · {predicted_class}"
+            "Grad-CAM overlay"
         )
 
         for axis in axes:
@@ -423,36 +431,18 @@ def show_gradcam_page():
 
         plt.close(fig)
 
-        section("How to read the Grad-CAM visualization")
-
-        st.markdown("""
-        - 🔴 **Red / Yellow:** Strong model activation
-        - 🟢 **Green:** Moderate model activation
-        - 🔵 **Blue:** Lower model activation
-
-        The visualization highlights areas that contributed to the model's
-        prediction. It does **not** prove that the model is focusing on
-        medically correct regions.
-        """)
-
-        st.info(
-            "Educational and research use only. This model is not validated "
-            "for clinical diagnosis or patient-care decisions."
+        st.caption(
+            "Grad-CAM highlights regions associated with the model's "
+            "prediction. It does not prove that the model focused on "
+            "medically meaningful pathology."
         )
 
     except Exception as error:
 
         st.error(
-            f"Grad-CAM could not run: {error}"
+            f"Grad-CAM could not be generated: {error}"
         )
-
-        st.caption(
-            "Check that medical_ai_resnet50.pth is in the same folder "
-            "as this dashboard and is the trained ResNet50 checkpoint."
-        )
-
-
-# =========================================================
+        # =========================================================
 # CSV FUNCTIONS
 # =========================================================
 
@@ -570,7 +560,9 @@ def extract_predictions(df):
         actual,
         predicted
     )
-    # =========================================================
+
+
+# =========================================================
 # METRICS
 # =========================================================
 
@@ -797,20 +789,28 @@ def cm_plot(metrics, title):
 
 
 # =========================================================
-# DOWNLOAD FUNCTION
+# DOWNLOAD FUNCTION - UNIQUE STREAMLIT KEYS
 # =========================================================
 
 def download_df(df, filename, label):
 
-    st.download_button(
-        label,
-        df.to_csv(index=False).encode(),
-        file_name=filename,
-        mime="text/csv"
+    unique_key = f"download_{filename}_{label}"
+
+    unique_key = (
+        unique_key
+        .replace(" ", "_")
+        .replace(".", "_")
+        .replace("-", "_")
     )
 
-
-# =========================================================
+    st.download_button(
+        label=label,
+        data=df.to_csv(index=False).encode("utf-8"),
+        file_name=filename,
+        mime="text/csv",
+        key=unique_key
+    )
+    # =========================================================
 # LOAD MODEL PREDICTION FILES
 # =========================================================
 
@@ -875,6 +875,7 @@ with st.sidebar:
             "Model Analysis",
             "Prediction Explorer",
             "Grad-CAM Explainability",
+            "Threshold Analysis",
             "Confidence & Calibration",
             "Advanced Tools"
         ],
@@ -907,6 +908,195 @@ st.markdown(
 
 
 # =========================================================
+# THRESHOLD ANALYSIS HELPERS
+# =========================================================
+
+def load_threshold_data(model_name):
+
+    filename = PROB_FILES.get(model_name)
+
+    if not filename:
+        return None, None, None
+
+    probability_df = load_csv(filename)
+
+    if probability_df is None:
+        return None, None, None
+
+    actual_col = find_col(
+        probability_df,
+        [
+            "actual",
+            "actual_label",
+            "true_label",
+            "ground_truth",
+            "label",
+            "target",
+            "y_true"
+        ]
+    )
+
+    probability_col = find_col(
+        probability_df,
+        [
+            "pneumonia_probability",
+            "probability_pneumonia",
+            "p_pneumonia",
+            "pneumonia_prob",
+            "prob_pneumonia",
+            "probability",
+            "prob",
+            "positive_probability",
+            "positive_prob",
+            "prediction_probability"
+        ]
+    )
+
+    if actual_col is None:
+
+        return probability_df, None, None
+
+    actual = normalize_labels(
+        probability_df[actual_col]
+    )
+
+    actual_binary = actual.map({
+        "normal": 0,
+        "pneumonia": 1
+    })
+
+    # -----------------------------------------------------
+    # FALLBACK PROBABILITY COLUMN DETECTION
+    # -----------------------------------------------------
+
+    if probability_col is None:
+
+        numeric_candidates = []
+
+        for column in probability_df.columns:
+
+            if column == actual_col:
+                continue
+
+            converted = pd.to_numeric(
+                probability_df[column],
+                errors="coerce"
+            )
+
+            valid_count = converted.notna().sum()
+
+            if valid_count == len(probability_df):
+
+                if (
+                    converted.min() >= 0
+                    and converted.max() <= 1
+                ):
+
+                    numeric_candidates.append(column)
+
+        if numeric_candidates:
+
+            probability_col = numeric_candidates[-1]
+
+    if probability_col is None:
+
+        return probability_df, actual_binary, None
+
+    probabilities = pd.to_numeric(
+        probability_df[probability_col],
+        errors="coerce"
+    )
+
+    valid_mask = (
+        actual_binary.notna()
+        & probabilities.notna()
+        & probabilities.between(0, 1)
+    )
+
+    actual_binary = actual_binary[valid_mask].astype(int)
+
+    probabilities = probabilities[valid_mask].astype(float)
+
+    return (
+        probability_df,
+        actual_binary.reset_index(drop=True),
+        probabilities.reset_index(drop=True)
+    )
+
+
+# =========================================================
+# THRESHOLD METRICS
+# =========================================================
+
+def calculate_threshold_metrics(actual, probabilities, threshold):
+
+    actual = np.asarray(actual).astype(int)
+
+    probabilities = np.asarray(probabilities).astype(float)
+
+    predicted = (
+        probabilities >= threshold
+    ).astype(int)
+
+    TP = int(
+        np.sum((actual == 1) & (predicted == 1))
+    )
+
+    TN = int(
+        np.sum((actual == 0) & (predicted == 0))
+    )
+
+    FP = int(
+        np.sum((actual == 0) & (predicted == 1))
+    )
+
+    FN = int(
+        np.sum((actual == 1) & (predicted == 0))
+    )
+
+    total = len(actual)
+
+    accuracy = (
+        (TP + TN) / total
+        if total else 0
+    )
+
+    precision = (
+        TP / (TP + FP)
+        if (TP + FP) else 0
+    )
+
+    sensitivity = (
+        TP / (TP + FN)
+        if (TP + FN) else 0
+    )
+
+    specificity = (
+        TN / (TN + FP)
+        if (TN + FP) else 0
+    )
+
+    f1 = (
+        2 * precision * sensitivity /
+        (precision + sensitivity)
+        if (precision + sensitivity) else 0
+    )
+
+    return {
+        "Threshold": threshold,
+        "TP": TP,
+        "TN": TN,
+        "FP": FP,
+        "FN": FN,
+        "Total": total,
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Sensitivity": sensitivity,
+        "Recall": sensitivity,
+        "Specificity": specificity,
+        "F1-Score": f1
+    }
+    # =========================================================
 # OVERVIEW PAGE
 # =========================================================
 
@@ -1188,7 +1378,9 @@ elif page == "Model Analysis":
                 f"{chosen_model.lower().replace(' ', '_')}_probabilities.csv",
                 "Download probability report"
             )
-            # =========================================================
+
+
+# =========================================================
 # PREDICTION EXPLORER PAGE
 # =========================================================
 
@@ -1292,355 +1484,1100 @@ elif page == "Prediction Explorer":
             st.error(
                 str(error)
             )
-
-
-# =========================================================
-# GRAD-CAM EXPLAINABILITY PAGE
+            # =========================================================
+# THRESHOLD ANALYSIS PAGE
 # =========================================================
 
-elif page == "Grad-CAM Explainability":
+elif page == "Threshold Analysis":
 
-    show_gradcam_page()
+    hero(
+        "DECISION THRESHOLD ANALYSIS",
+        "Threshold optimization workspace",
+        "Explore how changing the pneumonia probability threshold affects sensitivity, specificity, precision, accuracy and F1-score."
+    )
 
+    st.warning(
+        "Threshold analysis is an educational research tool. "
+        "A threshold selected using this dataset is not clinically validated "
+        "and must not be used for patient-care decisions."
+    )
 
-# =========================================================
+    available_probability_models = []
+
+    threshold_data = {}
+
+    for model_name in PROB_FILES:
+
+        report, actual, probabilities = load_threshold_data(
+            model_name
+        )
+
+        if (
+            report is not None
+            and actual is not None
+            and probabilities is not None
+            and len(actual) > 0
+        ):
+
+            available_probability_models.append(
+                model_name
+            )
+
+            threshold_data[model_name] = {
+                "report": report,
+                "actual": actual,
+                "probabilities": probabilities
+            }
+
+    if not available_probability_models:
+
+        st.error(
+            "No usable probability reports were found. "
+            "Threshold Analysis requires actual labels and pneumonia "
+            "probabilities in your probability CSV files."
+        )
+
+        section("Expected probability report columns")
+
+        st.markdown("""
+        The probability report should contain:
+
+        - **Actual label:** `actual`, `actual_label`, `true_label`, `label`, etc.
+        - **Pneumonia probability:** `pneumonia_probability`, `probability_pneumonia`, `p_pneumonia`, or another numeric probability column between 0 and 1.
+        """)
+
+    else:
+
+        # -------------------------------------------------
+        # MODEL AND THRESHOLD CONTROLS
+        # -------------------------------------------------
+
+        control1, control2 = st.columns(2)
+
+        with control1:
+
+            selected_threshold_model = st.selectbox(
+                "Select model",
+                available_probability_models,
+                key="threshold_model"
+            )
+
+        with control2:
+
+            selected_threshold = st.slider(
+                "Pneumonia decision threshold",
+                min_value=0.01,
+                max_value=0.99,
+                value=0.50,
+                step=0.01,
+                key="threshold_slider"
+            )
+
+        selected_data = threshold_data[
+            selected_threshold_model
+        ]
+
+        actual = selected_data["actual"]
+
+        probabilities = selected_data["probabilities"]
+
+        current_metrics = calculate_threshold_metrics(
+            actual,
+            probabilities,
+            selected_threshold
+        )
+
+        # -------------------------------------------------
+        # CURRENT THRESHOLD METRICS
+        # -------------------------------------------------
+
+        section(
+            f"Performance at threshold {selected_threshold:.2f}"
+        )
+
+        metric_columns = st.columns(5)
+
+        metric_columns[0].metric(
+            "Accuracy",
+            f"{current_metrics['Accuracy'] * 100:.2f}%"
+        )
+
+        metric_columns[1].metric(
+            "Precision",
+            f"{current_metrics['Precision'] * 100:.2f}%"
+        )
+
+        metric_columns[2].metric(
+            "Sensitivity / Recall",
+            f"{current_metrics['Sensitivity'] * 100:.2f}%"
+        )
+
+        metric_columns[3].metric(
+            "Specificity",
+            f"{current_metrics['Specificity'] * 100:.2f}%"
+        )
+
+        metric_columns[4].metric(
+            "F1-Score",
+            f"{current_metrics['F1-Score'] * 100:.2f}%"
+        )
+
+        # -------------------------------------------------
+        # CONFUSION MATRIX COUNTS
+        # -------------------------------------------------
+
+        section("Confusion matrix counts")
+
+        count_columns = st.columns(4)
+
+        count_columns[0].metric(
+            "True Positive",
+            current_metrics["TP"]
+        )
+
+        count_columns[1].metric(
+            "True Negative",
+            current_metrics["TN"]
+        )
+
+        count_columns[2].metric(
+            "False Positive",
+            current_metrics["FP"]
+        )
+
+        count_columns[3].metric(
+            "False Negative",
+            current_metrics["FN"]
+        )
+
+        # -------------------------------------------------
+        # CONFUSION MATRIX VISUALIZATION
+        # -------------------------------------------------
+
+        cm_plot(
+            current_metrics,
+            f"{selected_threshold_model} · Threshold {selected_threshold:.2f}"
+        )
+
+        # -------------------------------------------------
+        # THRESHOLD EXPLANATION
+        # -------------------------------------------------
+
+        section("What this threshold means")
+
+        st.markdown(
+            f"""
+            The selected decision threshold is **{selected_threshold:.2f}**.
+
+            - If pneumonia probability is **greater than or equal to {selected_threshold:.2f}**,
+              the model predicts **PNEUMONIA**.
+            - If pneumonia probability is **below {selected_threshold:.2f}**,
+              the model predicts **NORMAL**.
+            """
+        )
+
+        st.info(
+            "Lowering the threshold generally increases sensitivity but may "
+            "increase false positives. Raising the threshold generally "
+            "increases specificity but may increase false negatives. "
+            "Actual results depend on the model and dataset."
+        )
+
+        # -------------------------------------------------
+        # THRESHOLD SWEEP
+        # -------------------------------------------------
+
+        section("Threshold sweep: 0.10 to 0.90")
+
+        thresholds = np.round(
+            np.arange(0.10, 0.91, 0.01),
+            2
+        )
+
+        sweep_records = []
+
+        for threshold in thresholds:
+
+            metrics = calculate_threshold_metrics(
+                actual,
+                probabilities,
+                threshold
+            )
+
+            sweep_records.append(
+                metrics
+            )
+
+        sweep_df = pd.DataFrame(
+            sweep_records
+        )
+
+        sweep_display = sweep_df.copy()
+
+        percentage_columns = [
+            "Accuracy",
+            "Precision",
+            "Sensitivity",
+            "Recall",
+            "Specificity",
+            "F1-Score"
+        ]
+
+        for column in percentage_columns:
+
+            sweep_display[column] = (
+                sweep_display[column] * 100
+            )
+
+        st.dataframe(
+            sweep_display,
+            hide_index=True,
+            use_container_width=True,
+            height=350
+        )
+
+        download_df(
+            sweep_df,
+            f"{selected_threshold_model.lower().replace(' ', '_')}_threshold_sweep.csv",
+            "Download threshold sweep CSV"
+        )
+
+        # -------------------------------------------------
+        # SENSITIVITY AND SPECIFICITY
+        # -------------------------------------------------
+
+        section("Sensitivity and specificity across thresholds")
+
+        fig, ax = plt.subplots(
+            figsize=(10, 5)
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Sensitivity"] * 100,
+            label="Sensitivity / Recall",
+            linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Specificity"] * 100,
+            label="Specificity",
+            linewidth=2
+        )
+
+        ax.axvline(
+            selected_threshold,
+            linestyle="--",
+            label=f"Selected threshold = {selected_threshold:.2f}"
+        )
+
+        ax.set_xlabel(
+            "Decision threshold"
+        )
+
+        ax.set_ylabel(
+            "Percentage"
+        )
+
+        ax.set_title(
+            "Sensitivity and Specificity vs Threshold"
+        )
+
+        ax.set_ylim(
+            0,
+            100
+        )
+
+        ax.grid(
+            alpha=0.3
+        )
+
+        ax.legend()
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
+
+        plt.close(fig)
+
+        # -------------------------------------------------
+        # PRECISION AND F1
+        # -------------------------------------------------
+
+        section("Precision and F1-score across thresholds")
+
+        fig, ax = plt.subplots(
+            figsize=(10, 5)
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Precision"] * 100,
+            label="Precision",
+            linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["F1-Score"] * 100,
+            label="F1-Score",
+            linewidth=2
+        )
+
+        ax.axvline(
+            selected_threshold,
+            linestyle="--",
+            label=f"Selected threshold = {selected_threshold:.2f}"
+        )
+
+        ax.set_xlabel(
+            "Decision threshold"
+        )
+
+        ax.set_ylabel(
+            "Percentage"
+        )
+
+        ax.set_title(
+            "Precision and F1-Score vs Threshold"
+        )
+
+        ax.set_ylim(
+            0,
+            100
+        )
+
+        ax.grid(
+            alpha=0.3
+        )
+
+        ax.legend()
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
+
+        plt.close(fig)
+
+        # -------------------------------------------------
+        # ACCURACY AND F1
+        # -------------------------------------------------
+
+        section("Accuracy and F1-score across thresholds")
+
+        fig, ax = plt.subplots(
+            figsize=(10, 5)
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Accuracy"] * 100,
+            label="Accuracy",
+            linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["F1-Score"] * 100,
+            label="F1-Score",
+            linewidth=2
+        )
+
+        ax.axvline(
+            selected_threshold,
+            linestyle="--",
+            label=f"Selected threshold = {selected_threshold:.2f}"
+        )
+
+        ax.set_xlabel(
+            "Decision threshold"
+        )
+
+        ax.set_ylabel(
+            "Percentage"
+        )
+
+        ax.set_title(
+            "Accuracy and F1-Score vs Threshold"
+        )
+
+        ax.set_ylim(
+            0,
+            100
+        )
+
+        ax.grid(
+            alpha=0.3
+        )
+
+        ax.legend()
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
+
+        plt.close(fig)
+                # -------------------------------------------------
+        # BEST THRESHOLDS
+        # -------------------------------------------------
+
+        section("Threshold recommendations from this dataset")
+
+        best_f1_row = sweep_df.loc[
+            sweep_df["F1-Score"].idxmax()
+        ]
+
+        best_accuracy_row = sweep_df.loc[
+            sweep_df["Accuracy"].idxmax()
+        ]
+
+        best_sensitivity_row = sweep_df.loc[
+            sweep_df["Sensitivity"].idxmax()
+        ]
+
+        best_specificity_row = sweep_df.loc[
+            sweep_df["Specificity"].idxmax()
+        ]
+
+        recommendation_columns = st.columns(4)
+
+        recommendation_columns[0].metric(
+            "Best F1 threshold",
+            f"{best_f1_row['Threshold']:.2f}",
+            f"F1: {best_f1_row['F1-Score'] * 100:.2f}%"
+        )
+
+        recommendation_columns[1].metric(
+            "Best accuracy threshold",
+            f"{best_accuracy_row['Threshold']:.2f}",
+            f"Accuracy: {best_accuracy_row['Accuracy'] * 100:.2f}%"
+        )
+
+        recommendation_columns[2].metric(
+            "Highest sensitivity threshold",
+            f"{best_sensitivity_row['Threshold']:.2f}",
+            f"Sensitivity: {best_sensitivity_row['Sensitivity'] * 100:.2f}%"
+        )
+
+        recommendation_columns[3].metric(
+            "Highest specificity threshold",
+            f"{best_specificity_row['Threshold']:.2f}",
+            f"Specificity: {best_specificity_row['Specificity'] * 100:.2f}%"
+        )
+
+        st.warning(
+            "These thresholds are mathematical results from the current "
+            "test dataset. They are not medical recommendations and should "
+            "not be selected for clinical deployment without independent "
+            "validation, calibration assessment and clinical review."
+        )
+
+        # -------------------------------------------------
+        # CROSS-MODEL THRESHOLD COMPARISON
+        # -------------------------------------------------
+
+        section("Cross-model comparison at selected threshold")
+
+        cross_model_records = []
+
+        for model_name in available_probability_models:
+
+            model_actual = threshold_data[
+                model_name
+            ]["actual"]
+
+            model_probabilities = threshold_data[
+                model_name
+            ]["probabilities"]
+
+            metrics = calculate_threshold_metrics(
+                model_actual,
+                model_probabilities,
+                selected_threshold
+            )
+
+            metrics["Model"] = model_name
+
+            cross_model_records.append(
+                metrics
+            )
+
+        cross_model_df = pd.DataFrame(
+            cross_model_records
+        )
+
+        cross_model_df = cross_model_df[
+            [
+                "Model",
+                "Threshold",
+                "TP",
+                "TN",
+                "FP",
+                "FN",
+                "Total",
+                "Accuracy",
+                "Precision",
+                "Sensitivity",
+                "Specificity",
+                "F1-Score"
+            ]
+        ]
+
+        cross_model_display = cross_model_df.copy()
+
+        cross_model_percentage_columns = [
+            "Accuracy",
+            "Precision",
+            "Sensitivity",
+            "Specificity",
+            "F1-Score"
+        ]
+
+        for column in cross_model_percentage_columns:
+
+            if column in cross_model_display.columns:
+
+                cross_model_display[column] = (
+                    cross_model_display[column] * 100
+                )
+
+        st.dataframe(
+            cross_model_display,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        download_df(
+            cross_model_df,
+            "cross_model_threshold_comparison.csv",
+            "Download cross-model comparison"
+        )
+
+        # -------------------------------------------------
+        # CROSS-MODEL GRAPH
+        # -------------------------------------------------
+
+        section("Cross-model metric comparison")
+
+        selected_comparison_metric = st.selectbox(
+            "Choose comparison metric",
+            [
+                "Accuracy",
+                "Precision",
+                "Sensitivity",
+                "Specificity",
+                "F1-Score"
+            ],
+            key="threshold_cross_model_metric"
+        )
+
+        chart_data = cross_model_df.set_index(
+            "Model"
+        )[
+            [selected_comparison_metric]
+        ]
+
+        st.bar_chart(
+            chart_data * 100
+        )
+
+        # -------------------------------------------------
+        # DOWNLOAD CURRENT THRESHOLD METRICS
+        # -------------------------------------------------
+
+        current_metrics_df = pd.DataFrame([
+            current_metrics
+        ])
+
+        download_df(
+            current_metrics_df,
+            f"{selected_threshold_model.lower().replace(' ', '_')}_selected_threshold_metrics.csv",
+            "Download selected-threshold metrics"
+        )
+
+        st.caption(
+            "Threshold analysis uses the probability reports generated "
+            "by your model evaluation scripts. The selected threshold "
+            "changes the classification decision, not the model weights."
+        )
+        # =========================================================
 # CONFIDENCE & CALIBRATION PAGE
 # =========================================================
 
 elif page == "Confidence & Calibration":
 
     hero(
-        "MODEL UNCERTAINTY",
-        "Confidence & calibration analysis",
-        "Study whether prediction confidence aligns with observed accuracy across the three models."
+        "PROBABILITY QUALITY",
+        "Confidence & Calibration",
+        "Evaluate probability quality, confidence, Brier score, expected calibration error and reliability across the trained models."
     )
 
-    calibration_results = []
+    st.warning(
+        "Calibration results are dataset-specific and educational. "
+        "They do not establish clinical reliability or readiness for patient care."
+    )
 
-    for model_name, filename in PROB_FILES.items():
+    calibration_models = {}
 
-        report_path = BASE_DIR / filename
+    for model_name in PROB_FILES:
 
-        if not report_path.exists():
-            st.warning(f"{model_name}: probability report not found ({filename}).")
-            continue
-
-        try:
-            df = pd.read_csv(report_path)
-
-            # Flexible column lookup for probability reports
-            column_lookup = {str(c).strip().lower(): c for c in df.columns}
-
-            actual_col = next((column_lookup[c] for c in ["actual", "actual_label", "true_label", "y_true"] if c in column_lookup), None)
-            prob_col = next((column_lookup[c] for c in ["pneumonia_probability", "probability_pneumonia", "p_pneumonia", "probability"] if c in column_lookup), None)
-            confidence_col = next((column_lookup[c] for c in ["confidence", "prediction_confidence", "max_probability"] if c in column_lookup), None)
-            correct_col = next((column_lookup[c] for c in ["correct", "is_correct", "prediction_correct"] if c in column_lookup), None)
-
-            if actual_col is None or prob_col is None:
-                st.warning(f"{model_name}: report needs actual-label and pneumonia-probability columns.")
-                continue
-
-            actual = pd.to_numeric(df[actual_col], errors="coerce")
-            probability = pd.to_numeric(df[prob_col], errors="coerce")
-
-            valid = actual.notna() & probability.notna()
-            actual = actual[valid].astype(int)
-            probability = probability[valid].clip(0, 1)
-            clean_df = df.loc[valid].copy()
-
-            if len(actual) == 0:
-                st.warning(f"{model_name}: no valid rows found.")
-                continue
-
-            predicted = (probability >= 0.5).astype(int)
-            correct = (predicted == actual).astype(int)
-            confidence = np.maximum(probability, 1 - probability)
-
-            if confidence_col is not None:
-                reported_confidence = pd.to_numeric(clean_df[confidence_col], errors="coerce")
-                confidence = reported_confidence.fillna(pd.Series(confidence, index=reported_confidence.index)).to_numpy()
-
-            if correct_col is not None:
-                reported_correct = clean_df[correct_col]
-                if reported_correct.dtype == object:
-                    reported_correct = reported_correct.astype(str).str.lower().map({"true": 1, "false": 0, "yes": 1, "no": 0})
-                reported_correct = pd.to_numeric(reported_correct, errors="coerce")
-                correct = reported_correct.fillna(pd.Series(correct, index=reported_correct.index)).astype(int).to_numpy()
-
-            confidence = np.asarray(confidence, dtype=float)
-            correct = np.asarray(correct, dtype=int)
-
-            accuracy = float(correct.mean())
-            mean_confidence = float(confidence.mean())
-            correct_confidence = float(confidence[correct == 1].mean()) if np.any(correct == 1) else float("nan")
-            incorrect_confidence = float(confidence[correct == 0].mean()) if np.any(correct == 0) else float("nan")
-            brier_score = float(np.mean((probability.to_numpy() - actual.to_numpy()) ** 2))
-
-            bin_edges = np.linspace(0, 1, 11)
-            calibration_rows = []
-            ece = 0.0
-
-            for bin_index in range(10):
-                lower = bin_edges[bin_index]
-                upper = bin_edges[bin_index + 1]
-
-                if bin_index == 9:
-                    mask = (confidence >= lower) & (confidence <= upper)
-                else:
-                    mask = (confidence >= lower) & (confidence < upper)
-
-                if mask.sum() == 0:
-                    continue
-
-                bin_conf = float(confidence[mask].mean())
-                bin_acc = float(correct[mask].mean())
-                bin_count = int(mask.sum())
-
-                ece += (bin_count / len(confidence)) * abs(bin_acc - bin_conf)
-
-                calibration_rows.append({
-                    "Confidence Bin": f"{lower:.1f}–{upper:.1f}",
-                    "Samples": bin_count,
-                    "Mean Confidence": bin_conf,
-                    "Accuracy": bin_acc,
-                    "Calibration Gap": abs(bin_acc - bin_conf)
-                })
-
-            calibration_df = pd.DataFrame(calibration_rows)
-
-            calibration_results.append({
-                "Model": model_name,
-                "Accuracy": accuracy,
-                "Mean Confidence": mean_confidence,
-                "Correct Prediction Confidence": correct_confidence,
-                "Incorrect Prediction Confidence": incorrect_confidence,
-                "Brier Score": brier_score,
-                "ECE": ece
-            })
-
-            st.divider()
-            st.subheader(f"{model_name} analysis")
-
-            m1, m2, m3, m4 = st.columns(4)
-
-            m1.metric(
-                "Accuracy",
-                f"{accuracy:.2%}"
-            )
-
-            m2.metric(
-                "Mean Confidence",
-                f"{mean_confidence:.2%}"
-            )
-
-            m3.metric(
-                "Brier Score",
-                f"{brier_score:.4f}"
-            )
-
-            m4.metric(
-                "Expected Calibration Error",
-                f"{ece:.4f}"
-            )
-
-            m5, m6 = st.columns(2)
-
-            m5.metric(
-                "Confidence on Correct Predictions",
-                f"{correct_confidence:.2%}"
-                if not np.isnan(correct_confidence)
-                else "N/A"
-            )
-
-            m6.metric(
-                "Confidence on Incorrect Predictions",
-                f"{incorrect_confidence:.2%}"
-                if not np.isnan(incorrect_confidence)
-                else "N/A"
-            )
-
-            # -------------------------------------------------
-            # RELIABILITY DIAGRAM
-            # -------------------------------------------------
-
-            if not calibration_df.empty:
-
-                fig, ax = plt.subplots(
-                    figsize=(7, 5)
-                )
-
-                ax.plot(
-                    [0, 1],
-                    [0, 1],
-                    linestyle="--",
-                    label="Perfect calibration"
-                )
-
-                ax.plot(
-                    calibration_df["Mean Confidence"],
-                    calibration_df["Accuracy"],
-                    marker="o",
-                    label=model_name
-                )
-
-                ax.set_xlabel(
-                    "Mean confidence"
-                )
-
-                ax.set_ylabel(
-                    "Accuracy"
-                )
-
-                ax.set_title(
-                    f"Reliability Diagram — {model_name}"
-                )
-
-                ax.set_xlim(0, 1)
-
-                ax.set_ylim(0, 1)
-
-                ax.grid(
-                    True,
-                    alpha=0.3
-                )
-
-                ax.legend()
-
-                st.pyplot(
-                    fig,
-                    use_container_width=True
-                )
-
-                plt.close(fig)
-
-                # -------------------------------------------------
-                # CONFIDENCE DISTRIBUTION
-                # -------------------------------------------------
-
-                st.subheader(
-                    "Confidence distribution"
-                )
-
-                fig, ax = plt.subplots(
-                    figsize=(7, 4)
-                )
-
-                ax.hist(
-                    confidence,
-                    bins=10,
-                    edgecolor="black"
-                )
-
-                ax.set_xlabel(
-                    "Prediction confidence"
-                )
-
-                ax.set_ylabel(
-                    "Number of predictions"
-                )
-
-                ax.set_title(
-                    f"Confidence Histogram — {model_name}"
-                )
-
-                ax.grid(
-                    axis="y",
-                    alpha=0.3
-                )
-
-                st.pyplot(
-                    fig,
-                    use_container_width=True
-                )
-
-                plt.close(fig)
-
-                # -------------------------------------------------
-                # CALIBRATION TABLE
-                # -------------------------------------------------
-
-                st.subheader(
-                    "Calibration bins"
-                )
-
-                st.dataframe(
-                    calibration_df,
-                    hide_index=True,
-                    use_container_width=True
-                )
-
-                download_df(
-                    calibration_df,
-                    f"{model_name.lower().replace(' ', '_')}_calibration_bins.csv",
-                    "Download calibration bins CSV"
-                )
-
-        except Exception as error:
-
-            st.error(
-                f"Could not analyze {model_name}: {error}"
-            )
-
-    # =====================================================
-    # CROSS-MODEL CALIBRATION COMPARISON
-    # =====================================================
-
-    if calibration_results:
-
-        st.divider()
-
-        st.header(
-            "Cross-model calibration comparison"
+        report, actual, probabilities = load_threshold_data(
+            model_name
         )
 
-        comparison_df = pd.DataFrame(
-            calibration_results
-        ).set_index("Model")
+        if (
+            report is not None
+            and actual is not None
+            and probabilities is not None
+            and len(actual)
+        ):
 
-        st.dataframe(
-            comparison_df.style.format({
-                "Accuracy": "{:.2%}",
-                "Mean Confidence": "{:.2%}",
-                "Correct Prediction Confidence": "{:.2%}",
-                "Incorrect Prediction Confidence": "{:.2%}",
-                "Brier Score": "{:.4f}",
-                "ECE": "{:.4f}"
-            }),
+            calibration_models[model_name] = {
+                "report": report,
+                "actual": np.asarray(actual, dtype=int),
+                "probabilities": np.asarray(probabilities, dtype=float)
+            }
+
+    if not calibration_models:
+
+        st.error(
+            "No usable probability reports were found. Calibration requires "
+            "actual labels and pneumonia probabilities in the probability CSV files."
+        )
+
+        st.info(
+            "Check the probability report files in the Project File Status "
+            "section of Advanced Tools."
+        )
+
+    else:
+
+        selected_calibration_model = st.selectbox(
+            "Select model for calibration analysis",
+            list(calibration_models.keys()),
+            key="calibration_model"
+        )
+
+        calibration_data = calibration_models[
+            selected_calibration_model
+        ]
+
+        y_true = calibration_data["actual"]
+
+        y_prob = calibration_data["probabilities"]
+
+        y_pred = (
+            y_prob >= 0.50
+        ).astype(int)
+
+        confidence = np.where(
+            y_pred == 1,
+            y_prob,
+            1 - y_prob
+        )
+
+        correctness = (
+            y_pred == y_true
+        ).astype(int)
+
+        accuracy = float(
+            np.mean(correctness)
+        )
+
+        mean_confidence = float(
+            np.mean(confidence)
+        )
+
+        brier_score = float(
+            np.mean((y_prob - y_true) ** 2)
+        )
+
+        bin_edges = np.linspace(
+            0,
+            1,
+            11
+        )
+
+        bin_ids = np.digitize(
+            confidence,
+            bin_edges[1:-1],
+            right=False
+        )
+
+        bin_records = []
+
+        ece = 0.0
+
+        for bin_index in range(10):
+
+            mask = bin_ids == bin_index
+
+            count = int(
+                mask.sum()
+            )
+
+            if count:
+
+                bin_conf = float(
+                    confidence[mask].mean()
+                )
+
+                bin_accuracy = float(
+                    correctness[mask].mean()
+                )
+
+                ece += (
+                    count / len(confidence)
+                ) * abs(
+                    bin_accuracy - bin_conf
+                )
+
+            else:
+
+                bin_conf = np.nan
+
+                bin_accuracy = np.nan
+
+            bin_records.append({
+                "Bin": (
+                    f"{bin_edges[bin_index]:.1f}–"
+                    f"{bin_edges[bin_index + 1]:.1f}"
+                ),
+                "Lower bound": bin_edges[bin_index],
+                "Upper bound": bin_edges[bin_index + 1],
+                "Count": count,
+                "Mean confidence": bin_conf,
+                "Accuracy": bin_accuracy,
+                "Calibration gap": (
+                    abs(bin_accuracy - bin_conf)
+                    if count
+                    else np.nan
+                )
+            })
+
+        bins_df = pd.DataFrame(
+            bin_records
+        )
+
+        # -------------------------------------------------
+        # CALIBRATION METRICS
+        # -------------------------------------------------
+
+        section(
+            "Calibration metrics at the 0.50 decision threshold"
+        )
+
+        metric_cols = st.columns(5)
+
+        metric_cols[0].metric(
+            "Accuracy",
+            f"{accuracy * 100:.2f}%"
+        )
+
+        metric_cols[1].metric(
+            "Mean confidence",
+            f"{mean_confidence * 100:.2f}%"
+        )
+
+        metric_cols[2].metric(
+            "Brier score",
+            f"{brier_score:.4f}"
+        )
+
+        metric_cols[3].metric(
+            "ECE",
+            f"{ece:.4f}"
+        )
+
+        metric_cols[4].metric(
+            "Images",
+            f"{len(y_true):,}"
+        )
+
+        # -------------------------------------------------
+        # RELIABILITY DIAGRAM
+        # -------------------------------------------------
+
+        section("Reliability diagram")
+
+        fig, ax = plt.subplots(
+            figsize=(8, 6)
+        )
+
+        valid_bins = bins_df.dropna(
+            subset=[
+                "Mean confidence",
+                "Accuracy"
+            ]
+        )
+
+        ax.plot(
+            [0, 1],
+            [0, 1],
+            linestyle="--",
+            label="Perfect calibration"
+        )
+
+        ax.plot(
+            valid_bins["Mean confidence"],
+            valid_bins["Accuracy"],
+            marker="o",
+            linewidth=2,
+            label="Model"
+        )
+
+        ax.set_xlabel(
+            "Mean confidence"
+        )
+
+        ax.set_ylabel(
+            "Accuracy"
+        )
+
+        ax.set_title(
+            f"Reliability diagram · {selected_calibration_model}"
+        )
+
+        ax.set_xlim(
+            0,
+            1
+        )
+
+        ax.set_ylim(
+            0,
+            1
+        )
+
+        ax.grid(
+            alpha=0.3
+        )
+
+        ax.legend()
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
             use_container_width=True
         )
 
-        c1, c2 = st.columns(2)
+        plt.close(fig)
 
-        with c1:
+        # -------------------------------------------------
+        # CONFIDENCE DISTRIBUTION
+        # -------------------------------------------------
 
-            st.subheader(
-                "Brier score comparison"
-            )
+        section("Confidence distribution")
 
-            st.bar_chart(
-                comparison_df[["Brier Score"]]
-            )
-
-        with c2:
-
-            st.subheader(
-                "Expected calibration error comparison"
-            )
-
-            st.bar_chart(
-                comparison_df[["ECE"]]
-            )
-
-        download_df(
-            comparison_df.reset_index(),
-            "medical_ai_calibration_comparison.csv",
-            "Download comparison CSV"
+        fig, ax = plt.subplots(
+            figsize=(9, 4.5)
         )
 
-    st.info(
-        "Educational and research use only. These models are not clinically validated "
-        "and must not be used for diagnosis or patient-care decisions."
-    )
+        ax.hist(
+            confidence,
+            bins=np.linspace(0, 1, 11),
+            edgecolor="black"
+        )
+
+        ax.set_xlabel(
+            "Prediction confidence"
+        )
+
+        ax.set_ylabel(
+            "Number of images"
+        )
+
+        ax.set_title(
+            f"Confidence histogram · {selected_calibration_model}"
+        )
+
+        ax.grid(
+            axis="y",
+            alpha=0.25
+        )
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
+
+        plt.close(fig)
+
+        # -------------------------------------------------
+        # CALIBRATION BIN DETAILS
+        # -------------------------------------------------
+
+        section("Calibration bin details")
+
+        display_bins = bins_df.copy()
+
+        for col in [
+            "Mean confidence",
+            "Accuracy",
+            "Calibration gap"
+        ]:
+
+            display_bins[col] = display_bins[col].apply(
+                lambda value: (
+                    f"{value * 100:.2f}%"
+                    if pd.notna(value)
+                    else "—"
+                )
+            )
+
+        st.dataframe(
+            display_bins,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        download_df(
+            bins_df,
+            f"{selected_calibration_model.lower().replace(' ', '_')}_calibration_bins.csv",
+            "Download calibration bins CSV"
+        )
+
+        # -------------------------------------------------
+        # CROSS-MODEL CALIBRATION COMPARISON
+        # -------------------------------------------------
+
+        section("Cross-model calibration comparison")
+
+        comparison_records = []
+
+        for model_name, data in calibration_models.items():
+
+            actual_values = data["actual"]
+
+            probability_values = data["probabilities"]
+
+            predictions = (
+                probability_values >= 0.50
+            ).astype(int)
+
+            conf_values = np.where(
+                predictions == 1,
+                probability_values,
+                1 - probability_values
+            )
+
+            correct_values = (
+                predictions == actual_values
+            ).astype(int)
+
+            brier = float(
+                np.mean(
+                    (probability_values - actual_values) ** 2
+                )
+            )
+
+            ece_value = 0.0
+
+            ids = np.digitize(
+                conf_values,
+                bin_edges[1:-1],
+                right=False
+            )
+
+            for b in range(10):
+
+                mask = ids == b
+
+                if mask.any():
+
+                    ece_value += (
+                        mask.sum() / len(conf_values)
+                    ) * abs(
+                        float(correct_values[mask].mean())
+                        -
+                        float(conf_values[mask].mean())
+                    )
+
+            comparison_records.append({
+                "Model": model_name,
+                "Accuracy": float(
+                    correct_values.mean()
+                ),
+                "Mean confidence": float(
+                    conf_values.mean()
+                ),
+                "Brier score": brier,
+                "ECE": ece_value,
+                "Images": len(actual_values)
+            })
+
+        calibration_comparison = pd.DataFrame(
+            comparison_records
+        )
+
+        calibration_display = calibration_comparison.copy()
+
+        for col in [
+            "Accuracy",
+            "Mean confidence"
+        ]:
+
+            calibration_display[col] = (
+                calibration_display[col].map(
+                    lambda value: f"{value * 100:.2f}%"
+                )
+            )
+
+        st.dataframe(
+            calibration_display,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        metric_to_chart = st.selectbox(
+            "Compare calibration metric",
+            [
+                "Accuracy",
+                "Mean confidence",
+                "Brier score",
+                "ECE"
+            ],
+            key="calibration_compare_metric"
+        )
+
+        st.bar_chart(
+            calibration_comparison.set_index(
+                "Model"
+            )[
+                [metric_to_chart]
+            ]
+        )
+
+        download_df(
+            calibration_comparison,
+            "cross_model_calibration_comparison.csv",
+            "Download cross-model calibration CSV"
+        )
+
+        st.caption(
+            "Brier score and ECE are lower-is-better. Accuracy and mean "
+            "confidence should be interpreted together; confidence alone "
+            "is not proof of correctness."
+        )
+        # =========================================================
+# GRAD-CAM EXPLAINABILITY PAGE
+# =========================================================
+
+elif page == "Grad-CAM Explainability":
+
+    show_gradcam_page()
 
 
 # =========================================================
