@@ -207,13 +207,13 @@ Medical AI Model Evaluator/
 ### 1. Clone the repository
 
 ```bash
-git clone YOUR_GITHUB_REPOSITORY_URL
+git clone https://github.com/krishniprapullatella-pixel/medical-ai-evaluation-toolkit.git
 ```
 
 ### 2. Navigate to the project folder
 
 ```bash
-cd "Medical AI Model Evaluator"
+cd medical-ai-evaluation-toolkit
 ```
 
 ### 3. Install required packages
