@@ -12,6 +12,11 @@ import torch.nn as nn
 import torchvision.models as models
 import torchvision.transforms as transforms
 
+try:
+    from sklearn.metrics import roc_auc_score
+except Exception:
+    roc_auc_score = None
+
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -41,14 +46,18 @@ st.set_page_config(
 
 
 # =========================================================
-# CUSTOM CSS
+# CUSTOM CSS - UI POLISH
 # =========================================================
 
 st.markdown(dedent("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
-html, body, [class*="css"] {
+/* ---------------------------------------------------------
+   GLOBAL TYPOGRAPHY AND BACKGROUND
+--------------------------------------------------------- */
+
+html, body, [class*="css"], [data-testid="stMarkdownContainer"] {
     font-family: 'DM Sans', sans-serif;
 }
 
@@ -56,21 +65,53 @@ html, body, [class*="css"] {
     background: #f4f7fb;
 }
 
+[data-testid="stAppViewContainer"] {
+    background: #f4f7fb;
+}
+
+[data-testid="stMain"] {
+    background: #f4f7fb;
+}
+
+.block-container {
+    padding-top: 1.65rem;
+    padding-bottom: 2.8rem;
+    max-width: 1600px;
+}
+
+/* ---------------------------------------------------------
+   SIDEBAR
+--------------------------------------------------------- */
+
 [data-testid="stSidebar"] {
-    background: #111d35;
+    background: linear-gradient(180deg, #101b31 0%, #142945 100%);
+    border-right: 1px solid rgba(255,255,255,0.08);
 }
 
 [data-testid="stSidebar"] * {
     color: #edf3ff;
 }
 
-[data-testid="stMetric"] {
-    background: white;
-    border: 1px solid #e5eaf2;
-    padding: 16px;
-    border-radius: 13px;
-    box-shadow: 0 2px 8px rgba(20,40,70,.04);
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    color: #d5e1f3;
 }
+
+[data-testid="stSidebar"] hr {
+    border-color: rgba(255,255,255,0.12);
+}
+
+[data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+    color: #d5e1f3;
+}
+
+[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    border-radius: 10px;
+    padding: 5px 8px;
+}
+
+/* ---------------------------------------------------------
+   HEADINGS
+--------------------------------------------------------- */
 
 .main-heading {
     font-family: Manrope, sans-serif;
@@ -78,62 +119,256 @@ html, body, [class*="css"] {
     font-size: 2rem;
     font-weight: 800;
     margin-bottom: 2px;
+    letter-spacing: -0.035em;
 }
 
 .sub-heading {
     color: #718096;
     font-size: .95rem;
+    line-height: 1.6;
 }
 
+h1, h2, h3 {
+    font-family: Manrope, sans-serif;
+    letter-spacing: -0.025em;
+}
+
+h1 {
+    color: #17243d;
+}
+
+h2, h3 {
+    color: #1e2f49;
+}
+
+/* ---------------------------------------------------------
+   HERO BANNER
+--------------------------------------------------------- */
+
 .hero {
-    background: linear-gradient(115deg, #142a49, #205c78);
-    border-radius: 17px;
-    padding: 28px 32px;
-    margin: 18px 0 24px;
+    background: linear-gradient(115deg, #142a49 0%, #1b4965 52%, #205c78 100%);
+    border-radius: 18px;
+    padding: 30px 34px;
+    margin: 16px 0 26px;
     color: white;
+    box-shadow: 0 12px 30px rgba(20, 42, 73, 0.12);
+    border: 1px solid rgba(255,255,255,0.08);
 }
 
 .hero .eyebrow {
     color: #a9dce9;
     font-size: .76rem;
     font-weight: 700;
-    letter-spacing: .13em;
+    letter-spacing: .15em;
     text-transform: uppercase;
 }
 
 .hero h1 {
     color: white;
     font-family: Manrope, sans-serif;
-    font-size: 1.9rem;
+    font-size: clamp(1.55rem, 2.5vw, 2.15rem);
     font-weight: 800;
-    margin: 9px 0;
+    margin: 10px 0 9px;
+    letter-spacing: -0.04em;
+    line-height: 1.2;
 }
 
 .hero p {
     color: #dceaf4;
     font-size: .98rem;
+    line-height: 1.65;
     margin-bottom: 0;
+    max-width: 950px;
 }
+
+/* ---------------------------------------------------------
+   SECTION HEADINGS
+--------------------------------------------------------- */
 
 .section-heading {
     font-family: Manrope, sans-serif;
     font-size: 1.25rem;
     font-weight: 800;
     color: #17243d;
-    margin: 20px 0 8px;
-}
-
-.info-panel {
-    background: white;
-    border: 1px solid #e5eaf2;
-    border-radius: 13px;
-    padding: 18px;
+    margin: 22px 0 10px;
+    letter-spacing: -0.025em;
 }
 
 .small-note {
     color: #718096;
     font-size: .84rem;
+    line-height: 1.55;
 }
+
+/* ---------------------------------------------------------
+   INFORMATION PANELS
+--------------------------------------------------------- */
+
+.info-panel {
+    background: white;
+    border: 1px solid #e5eaf2;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 3px 12px rgba(20, 40, 70, .035);
+}
+
+/* ---------------------------------------------------------
+   METRIC CARDS - PREVENT VALUE CLIPPING
+--------------------------------------------------------- */
+
+[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid #e3eaf3;
+    padding: 17px 18px;
+    border-radius: 15px;
+    box-shadow: 0 3px 12px rgba(20, 40, 70, .045);
+    min-height: 112px;
+    height: auto;
+    overflow: visible;
+    transition: transform .18s ease, box-shadow .18s ease;
+}
+
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(20, 40, 70, .075);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #718096 !important;
+    font-size: .82rem !important;
+    font-weight: 600 !important;
+    line-height: 1.4 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #17243d !important;
+    font-family: Manrope, sans-serif !important;
+    font-weight: 800 !important;
+    font-size: clamp(1.15rem, 1.8vw, 1.65rem) !important;
+    line-height: 1.35 !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    word-break: break-word !important;
+}
+
+[data-testid="stMetricDelta"] {
+    font-size: .78rem !important;
+}
+
+/* ---------------------------------------------------------
+   BUTTONS
+--------------------------------------------------------- */
+
+.stButton > button,
+.stDownloadButton > button {
+    border-radius: 10px;
+    border: 1px solid #d8e3ef;
+    font-weight: 600;
+    transition: all .18s ease;
+}
+
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    border-color: #2b6b8a;
+    color: #205c78;
+    transform: translateY(-1px);
+}
+
+/* ---------------------------------------------------------
+   DATA TABLES
+--------------------------------------------------------- */
+
+[data-testid="stDataFrame"],
+[data-testid="stTable"] {
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #e5eaf2;
+}
+
+/* ---------------------------------------------------------
+   CHARTS
+--------------------------------------------------------- */
+
+[data-testid="stPlotlyChart"],
+[data-testid="stPyplotChart"] {
+    background: #ffffff;
+    border: 1px solid #e5eaf2;
+    border-radius: 14px;
+    padding: 8px;
+}
+
+/* ---------------------------------------------------------
+   INPUTS
+--------------------------------------------------------- */
+
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] div[data-baseweb="select"],
+[data-testid="stFileUploader"] {
+    border-radius: 10px;
+}
+
+/* ---------------------------------------------------------
+   ALERTS AND EXPANDERS
+--------------------------------------------------------- */
+
+[data-testid="stAlert"] {
+    border-radius: 12px;
+}
+
+[data-testid="stExpander"] {
+    border: 1px solid #e5eaf2;
+    border-radius: 12px;
+    background: #ffffff;
+}
+
+/* ---------------------------------------------------------
+   RESPONSIVE LAYOUT
+--------------------------------------------------------- */
+
+@media (max-width: 900px) {
+    .block-container {
+        padding-top: 1rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .hero {
+        padding: 23px 22px;
+        border-radius: 15px;
+    }
+
+    .hero h1 {
+        font-size: 1.6rem;
+    }
+
+    [data-testid="stMetric"] {
+        padding: 14px;
+        min-height: 100px;
+    }
+}
+
+@media (max-width: 600px) {
+    .hero {
+        padding: 20px 18px;
+    }
+
+    .hero h1 {
+        font-size: 1.45rem;
+    }
+
+    [data-testid="stMetricValue"] {
+        font-size: 1.1rem !important;
+    }
+}
+
+/* ---------------------------------------------------------
+   HIDE STREAMLIT DEFAULT FOOTER
+--------------------------------------------------------- */
 
 footer {
     visibility: hidden;
@@ -164,8 +399,6 @@ def section(title):
         f'<div class="section-heading">{title}</div>',
         unsafe_allow_html=True
     )
-
-
 # =========================================================
 # RESNET50 MODEL FOR GRAD-CAM
 # =========================================================
@@ -442,7 +675,9 @@ def show_gradcam_page():
         st.error(
             f"Grad-CAM could not be generated: {error}"
         )
-        # =========================================================
+
+
+# =========================================================
 # CSV FUNCTIONS
 # =========================================================
 
@@ -560,8 +795,6 @@ def extract_predictions(df):
         actual,
         predicted
     )
-
-
 # =========================================================
 # METRICS
 # =========================================================
@@ -687,14 +920,18 @@ def metric_cards(metrics, names=None):
 
     for column, name in zip(columns, names):
 
+        value = fmt(
+            metrics.get(name)
+        )
+
         column.metric(
-            name,
-            fmt(metrics.get(name))
+            label=name,
+            value=value
         )
 
 
 # =========================================================
-# CONFUSION MATRIX
+# CONFUSION MATRIX VISUALIZATION
 # =========================================================
 
 def cm_plot(metrics, title):
@@ -810,7 +1047,9 @@ def download_df(df, filename, label):
         mime="text/csv",
         key=unique_key
     )
-    # =========================================================
+
+
+# =========================================================
 # LOAD MODEL PREDICTION FILES
 # =========================================================
 
@@ -877,7 +1116,11 @@ with st.sidebar:
             "Grad-CAM Explainability",
             "Threshold Analysis",
             "Confidence & Calibration",
-            "Advanced Tools"
+            "Advanced Tools",
+            "Medical AI Scorecard",
+            "Clinical Risk Analysis",
+            "Robustness Stress Test",
+            "Automated Research Report"
         ],
         label_visibility="collapsed"
     )
@@ -955,7 +1198,6 @@ def load_threshold_data(model_name):
     if actual_col is None:
 
         return probability_df, None, None
-
     actual = normalize_labels(
         probability_df[actual_col]
     )
@@ -1096,7 +1338,9 @@ def calculate_threshold_metrics(actual, probabilities, threshold):
         "Specificity": specificity,
         "F1-Score": f1
     }
-    # =========================================================
+
+
+# =========================================================
 # OVERVIEW PAGE
 # =========================================================
 
@@ -1354,8 +1598,7 @@ elif page == "Model Analysis":
         )
 
         download_df(
-            data,
-            f"{chosen_model.lower().replace(' ', '_')}_predictions.csv",
+            data,            f"{chosen_model.lower().replace(' ', '_')}_predictions.csv",
             "Download predictions"
         )
 
@@ -1484,7 +1727,9 @@ elif page == "Prediction Explorer":
             st.error(
                 str(error)
             )
-            # =========================================================
+
+
+# =========================================================
 # THRESHOLD ANALYSIS PAGE
 # =========================================================
 
@@ -1754,9 +1999,66 @@ elif page == "Threshold Analysis":
 
         ax.plot(
             sweep_df["Threshold"],
-            sweep_df["Sensitivity"] * 100,
+            sweep_df["Sensitivity"],
             label="Sensitivity / Recall",
             linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Specificity"],
+            label="Specificity",
+            linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["Accuracy"],
+            label="Accuracy",
+            linewidth=2
+        )
+
+        ax.plot(
+            sweep_df["Threshold"],
+            sweep_df["F1-Score"],
+            label="F1-Score",
+            linewidth=2
+        )
+
+        ax.axvline(
+            selected_threshold,
+            linestyle="--",
+            label=f"Selected threshold = {selected_threshold:.2f}"
+        )
+
+        ax.set_xlabel(
+            "Pneumonia probability threshold"
+        )
+
+        ax.set_ylabel(
+            "Metric value"
+        )
+
+        ax.set_ylim(
+            0,
+            1.05
+        )
+
+        ax.set_title(
+            "Threshold-dependent model performance"
+        )
+
+        ax.legend()
+
+        ax.grid(
+            alpha=.25
+        )
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
         )
 
         ax.plot(
@@ -1927,7 +2229,8 @@ elif page == "Threshold Analysis":
         )
 
         plt.close(fig)
-                # -------------------------------------------------
+
+        # -------------------------------------------------
         # BEST THRESHOLDS
         # -------------------------------------------------
 
@@ -2110,7 +2413,9 @@ elif page == "Threshold Analysis":
             "by your model evaluation scripts. The selected threshold "
             "changes the classification decision, not the model weights."
         )
-        # =========================================================
+
+
+# =========================================================
 # CONFIDENCE & CALIBRATION PAGE
 # =========================================================
 
@@ -2153,7 +2458,7 @@ elif page == "Confidence & Calibration":
         st.error(
             "No usable probability reports were found. Calibration requires "
             "actual labels and pneumonia probabilities in the probability CSV files."
-        )
+            )
 
         st.info(
             "Check the probability report files in the Project File Status "
@@ -2571,7 +2876,9 @@ elif page == "Confidence & Calibration":
             "confidence should be interpreted together; confidence alone "
             "is not proof of correctness."
         )
-        # =========================================================
+
+
+# =========================================================
 # GRAD-CAM EXPLAINABILITY PAGE
 # =========================================================
 
@@ -2683,6 +2990,712 @@ elif page == "Advanced Tools":
                 "Some files were found but could not be evaluated: "
                 + str(model_errors)
             )
+            # =========================================================
+# MEDICAL AI SCORECARD
+# =========================================================
+
+elif page == "Medical AI Scorecard":
+
+    hero(
+        "MODEL BENCHMARKING",
+        "Medical AI Model Scorecard",
+        "A transparent weighted score using available evaluation metrics. Scores are comparative research indicators—not clinical rankings."
+    )
+
+    st.warning(
+        "The scorecard uses the currently available dataset and metric values. "
+        "Weights are configurable and should not be interpreted as clinical validation."
+    )
+
+    if not model_metrics:
+
+        st.warning(
+            "Load valid model prediction CSV files to generate the scorecard."
+        )
+
+    else:
+
+        weights = {
+            "Recall": 0.30,
+            "ROC-AUC": 0.25,
+            "F1-Score": 0.20,
+            "Specificity": 0.15,
+            "Accuracy": 0.10,
+        }
+
+        weight_cols = st.columns(
+            len(weights)
+        )
+
+        chosen_weights = {}
+
+        for col, (metric, default_weight) in zip(
+            weight_cols,
+            weights.items()
+        ):
+
+            chosen_weights[metric] = col.number_input(
+                f"{metric} weight",
+                min_value=0.0,
+                max_value=1.0,
+                value=float(default_weight),
+                step=0.05,
+                key=f"score_weight_{metric}"
+            )
+
+        weight_total = sum(
+            chosen_weights.values()
+        )
+
+        if weight_total <= 0:
+
+            st.error(
+                "At least one metric weight must be greater than zero."
+            )
+
+        else:
+
+            score_records = []
+
+            for model_name, metrics in model_metrics.items():
+
+                auc_value = None
+
+                prob_data = load_threshold_data(
+                    model_name
+                )
+
+                if (
+                    roc_auc_score is not None
+                    and prob_data[1] is not None
+                    and prob_data[2] is not None
+                ):
+
+                    try:
+
+                        auc_value = float(
+                            roc_auc_score(
+                                prob_data[1],
+                                prob_data[2]
+                            ) * 100
+                        )
+
+                    except Exception:
+
+                        auc_value = None
+
+                metric_values = {
+                    "Recall": metrics.get("Recall"),
+                    "ROC-AUC": auc_value,
+                    "F1-Score": metrics.get("F1-Score"),
+                    "Specificity": metrics.get("Specificity"),
+                    "Accuracy": metrics.get("Accuracy"),
+                }
+
+                available_weight = sum(
+                    chosen_weights[m]
+                    for m, value in metric_values.items()
+                    if value is not None
+                )
+
+                score = (
+                    sum(
+                        chosen_weights[m] * float(value)
+                        for m, value in metric_values.items()
+                        if value is not None
+                    )
+                    / available_weight
+                    if available_weight > 0
+                    else None
+                )
+
+                row = {
+                    "Model": model_name,
+                    **metric_values,
+                    "Weighted Score": score
+                }
+
+                score_records.append(
+                    row
+                )
+
+            score_df = pd.DataFrame(
+                score_records
+            )
+
+            score_df = score_df.sort_values(
+                "Weighted Score",
+                ascending=False,
+                na_position="last"
+            ).reset_index(drop=True)
+
+            score_df.insert(
+                0,
+                "Rank",
+                np.arange(1, len(score_df) + 1)
+            )
+
+            display_df = score_df.copy()
+
+            for col in [
+                "Recall",
+                "ROC-AUC",
+                "F1-Score",
+                "Specificity",
+                "Accuracy",
+                "Weighted Score"
+            ]:
+
+                display_df[col] = display_df[col].apply(
+                    lambda x: (
+                        "N/A"
+                        if pd.isna(x)
+                        else f"{x:.2f}%"
+                    )
+                )
+
+            section("Overall ranking")
+
+            st.dataframe(
+                display_df,
+                hide_index=True,
+                use_container_width=True
+            )
+
+            if (
+                not score_df.empty
+                and pd.notna(score_df.iloc[0]["Weighted Score"])
+            ):
+
+                st.success(
+                    f"Top-ranked model under the selected weighting: "
+                    f"**{score_df.iloc[0]['Model']}** "
+                    f"({score_df.iloc[0]['Weighted Score']:.2f}/100)"
+                )
+
+            section("Weighted score comparison")
+
+            st.bar_chart(
+                score_df.set_index("Model")[[
+                    "Weighted Score"
+                ]]
+            )
+
+            download_df(
+                score_df,
+                "medical_ai_weighted_scorecard.csv",
+                "Download scorecard CSV"
+            )
+
+            st.caption(
+                "Metrics with unavailable values are omitted from each "
+                "model's normalized weighted score. AUC requires "
+                "probability reports and scikit-learn."
+            )
+
+
+# =========================================================
+# CLINICAL RISK ANALYSIS
+# =========================================================
+
+elif page == "Clinical Risk Analysis":
+
+    hero(
+        "ERROR ANALYSIS",
+        "Clinical Risk Analysis",
+        "Explore false negatives, false positives and class-specific error rates from your evaluation results."
+    )
+
+    st.warning(
+        "Educational research only. This page is not a clinical risk "
+        "calculator and must not be used for patient-care decisions."
+    )
+
+    if not model_metrics:
+
+        st.warning(
+            "Load prediction reports to view error analysis."
+        )
+
+    else:
+
+        risk_model = st.selectbox(
+            "Select model",
+            list(model_metrics.keys()),
+            key="risk_model_select"
+        )
+
+        risk_metrics = model_metrics[
+            risk_model
+        ]
+
+        total_positive = (
+            risk_metrics["TP"]
+            + risk_metrics["FN"]
+        )
+
+        total_negative = (
+            risk_metrics["TN"]
+            + risk_metrics["FP"]
+        )
+
+        fn_rate = (
+            risk_metrics["FN"] / total_positive * 100
+            if total_positive
+            else None
+        )
+
+        fp_rate = (
+            risk_metrics["FP"] / total_negative * 100
+            if total_negative
+            else None
+        )
+
+        section("Error counts and rates")
+
+        a, b, c, d = st.columns(4)
+
+        a.metric(
+            "False negatives",
+            risk_metrics["FN"]
+        )
+
+        b.metric(
+            "False positives",
+            risk_metrics["FP"]
+        )
+
+        c.metric(
+            "False-negative rate",
+            fmt(fn_rate)
+        )
+
+        d.metric(
+            "False-positive rate",
+            fmt(fp_rate)
+        )
+
+        section("Interpretation")
+
+        risk_interpretation = [
+            f"- **False negatives:** {risk_metrics['FN']} pneumonia-labelled cases were predicted as Normal.",
+            f"- **False positives:** {risk_metrics['FP']} Normal-labelled cases were predicted as Pneumonia.",
+            f"- **Sensitivity / recall:** {fmt(risk_metrics.get('Recall'))} of pneumonia-labelled cases were detected.",
+            f"- **Specificity:** {fmt(risk_metrics.get('Specificity'))} of normal-labelled cases were correctly classified.",
+        ]
+
+        st.markdown(
+            "\n".join(risk_interpretation)
+        )
+
+        cm_plot(
+            risk_metrics,
+            f"{risk_model} · Error analysis"
+        )
+
+        risk_table = pd.DataFrame([{
+            "Model": risk_model,
+            "Total Images": risk_metrics["Total Images"],
+            "Pneumonia Cases": total_positive,
+            "Normal Cases": total_negative,
+            "False Negatives": risk_metrics["FN"],
+            "False Positives": risk_metrics["FP"],
+            "False Negative Rate (%)": fn_rate,
+            "False Positive Rate (%)": fp_rate,
+            "Sensitivity (%)": risk_metrics.get("Recall"),
+            "Specificity (%)": risk_metrics.get("Specificity"),
+        }])
+
+        download_df(
+            risk_table,
+            "medical_ai_error_risk_analysis.csv",
+            "Download risk analysis CSV"
+        )
+        # =========================================================
+# ROBUSTNESS STRESS TEST
+# =========================================================
+
+elif page == "Robustness Stress Test":
+
+    hero(
+        "SENSITIVITY TESTING",
+        "Robustness Stress Test",
+        "Stress-test probability decisions by shifting the probability values and comparing threshold-based metrics."
+    )
+
+    st.warning(
+        "This is a synthetic probability perturbation experiment—not image "
+        "corruption testing, external validation, or clinical robustness evidence."
+    )
+
+    usable_models = {}
+
+    for name in PROB_FILES:
+
+        report, y_true, y_prob = load_threshold_data(
+            name
+        )
+
+        if (
+            y_true is not None
+            and y_prob is not None
+            and len(y_true)
+        ):
+
+            usable_models[name] = (
+                np.asarray(y_true, dtype=int),
+                np.asarray(y_prob, dtype=float)
+            )
+
+    if not usable_models:
+
+        st.warning(
+            "No valid probability report is available for robustness stress testing."
+        )
+
+    else:
+
+        robust_model = st.selectbox(
+            "Model",
+            list(usable_models.keys()),
+            key="robust_model"
+        )
+
+        base_threshold = st.slider(
+            "Decision threshold",
+            0.05,
+            0.95,
+            0.50,
+            0.01,
+            key="robust_threshold"
+        )
+
+        perturbation = st.slider(
+            "Probability shift magnitude",
+            0.00,
+            0.30,
+            0.05,
+            0.01,
+            key="robust_shift"
+        )
+
+        y_true, y_prob = usable_models[
+            robust_model
+        ]
+
+        test_records = []
+
+        for shift_label, shift_value in [
+            ("Negative shift", -perturbation),
+            ("No shift", 0.0),
+            ("Positive shift", perturbation)
+        ]:
+
+            shifted = np.clip(
+                y_prob + shift_value,
+                0.0,
+                1.0
+            )
+
+            met = calculate_threshold_metrics(
+                y_true,
+                shifted,
+                base_threshold
+            )
+
+            met["Stress Condition"] = shift_label
+
+            met["Probability Shift"] = shift_value
+
+            test_records.append(
+                met
+            )
+
+        stress_df = pd.DataFrame(
+            test_records
+        )
+
+        section("Stress-test metrics")
+
+        show_stress = stress_df[
+            [
+                "Stress Condition",
+                "Probability Shift",
+                "TP",
+                "TN",
+                "FP",
+                "FN",
+                "Accuracy",
+                "Precision",
+                "Sensitivity",
+                "Specificity",
+                "F1-Score"
+            ]
+        ].copy()
+
+        for col in [
+            "Accuracy",
+            "Precision",
+            "Sensitivity",
+            "Specificity",
+            "F1-Score"
+        ]:
+
+            show_stress[col] = show_stress[col].apply(
+                lambda x: f"{x * 100:.2f}%"
+            )
+
+        st.dataframe(
+            show_stress,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        section("Metric changes under probability shifts")
+
+        plot_df = stress_df.set_index(
+            "Stress Condition"
+        )[
+            [
+                "Accuracy",
+                "Precision",
+                "Sensitivity",
+                "Specificity",
+                "F1-Score"
+            ]
+        ] * 100
+
+        st.bar_chart(
+            plot_df
+        )
+
+        download_df(
+            stress_df,
+            "medical_ai_probability_robustness_stress_test.csv",
+            "Download stress-test results"
+        )
+
+
+# =========================================================
+# AUTOMATED RESEARCH REPORT
+# =========================================================
+
+elif page == "Automated Research Report":
+
+    hero(
+        "REPORT GENERATION",
+        "Automated Evaluation Report",
+        "Generate a downloadable summary of the available model evaluation metrics and error counts."
+    )
+
+    if not model_metrics:
+
+        st.warning(
+            "Load valid model prediction files before generating a report."
+        )
+
+    else:
+
+        report_rows = []
+
+        for model_name, met in model_metrics.items():
+
+            auc = None
+
+            prob_data = load_threshold_data(
+                model_name
+            )
+
+            if (
+                roc_auc_score is not None
+                and prob_data[1] is not None
+                and prob_data[2] is not None
+            ):
+
+                try:
+
+                    auc = float(
+                        roc_auc_score(
+                            prob_data[1],
+                            prob_data[2]
+                        ) * 100
+                    )
+
+                except Exception:
+
+                    auc = None
+
+            report_rows.append({
+                "Model": model_name,
+                **met,
+                "ROC-AUC": auc
+            })
+
+        report_df = pd.DataFrame(
+            report_rows
+        )
+
+        section("Report preview")
+
+        st.dataframe(
+            report_df,
+            hide_index=True,
+            use_container_width=True
+        )
+
+        best_acc = (
+            report_df.loc[
+                report_df["Accuracy"].idxmax(),
+                "Model"
+            ]
+            if report_df["Accuracy"].notna().any()
+            else "N/A"
+        )
+
+        best_recall = (
+            report_df.loc[
+                report_df["Recall"].idxmax(),
+                "Model"
+            ]
+            if report_df["Recall"].notna().any()
+            else "N/A"
+        )
+
+        best_f1 = (
+            report_df.loc[
+                report_df["F1-Score"].idxmax(),
+                "Model"
+            ]
+            if report_df["F1-Score"].notna().any()
+            else "N/A"
+        )
+
+        lines = [
+            "# Medical AI Model Evaluation Report",
+            "",
+            "**Purpose:** Educational evaluation of chest X-ray classification models.",
+            "**Safety:** This report is not clinical validation and must not be used for diagnosis or patient care.",
+            "",
+            "## Model highlights",
+            f"- Highest accuracy: {best_acc}",
+            f"- Highest recall/sensitivity: {best_recall}",
+            f"- Highest F1-score: {best_f1}",
+            "",
+            "## Metrics",
+            report_df.to_markdown(index=False),
+            "",
+            "## Limitations",
+            "- Results are dataset-dependent.",
+            "- External validation, subgroup analysis, calibration review and clinical assessment are required before any clinical use.",
+            "- No model output in this report constitutes a medical diagnosis.",
+        ]
+
+        report_text = "\n".join(
+            lines
+        )
+
+        st.markdown(
+            report_text
+        )
+
+        st.download_button(
+            "Download Markdown report",
+            report_text,
+            file_name="medical_ai_evaluation_report.md",
+            mime="text/markdown",
+            key="automated_report_md"
+        )
+
+        download_df(
+            report_df,
+            "medical_ai_automated_evaluation_report.csv",
+            "Download report metrics CSV"
+        )
+
+        section("Performance radar chart")
+
+        radar_metrics = [
+            "Accuracy",
+            "Precision",
+            "Recall",
+            "Specificity",
+            "F1-Score"
+        ]
+
+        radar_df = report_df.set_index(
+            "Model"
+        )[radar_metrics]
+
+        fig, ax = plt.subplots(
+            figsize=(7, 6),
+            subplot_kw={
+                "projection": "polar"
+            }
+        )
+
+        angles = np.linspace(
+            0,
+            2 * np.pi,
+            len(radar_metrics),
+            endpoint=False
+        ).tolist()
+
+        angles += angles[:1]
+
+        for model_name, row in radar_df.iterrows():
+
+            values = [
+                float(row[m]) / 100
+                if pd.notna(row[m])
+                else 0.0
+                for m in radar_metrics
+            ]
+
+            values += values[:1]
+
+            ax.plot(
+                angles,
+                values,
+                linewidth=2,
+                label=model_name
+            )
+
+            ax.fill(
+                angles,
+                values,
+                alpha=0.08
+            )
+
+        ax.set_xticks(
+            angles[:-1]
+        )
+
+        ax.set_xticklabels(
+            radar_metrics
+        )
+
+        ax.set_ylim(
+            0,
+            1
+        )
+
+        ax.grid(
+            alpha=0.25
+        )
+
+        ax.legend(
+            loc="upper right",
+            bbox_to_anchor=(1.25, 1.15)
+        )
+
+        fig.tight_layout()
+
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
+
+        plt.close(fig)
 
 
 # =========================================================
@@ -2695,3 +3708,6 @@ st.caption(
     "Medical AI Evaluation Toolkit | Educational research project | "
     "Not intended for clinical diagnosis or patient-care decisions."
 )
+
+
+
